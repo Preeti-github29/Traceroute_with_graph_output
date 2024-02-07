@@ -1,0 +1,130 @@
+import argparse
+import subprocess
+import json
+import matplotlib.pyplot as plt
+from datetime import datetime
+import os
+import sys
+import time
+import re
+from collections import defaultdict
+
+def start_first(TARGET, NUM_RUNS, RUN_DELAY, MAX_HOPS, OUTPUT_JSON, GRAPH, test_dir):
+    if test_dir:
+        data_obtained = transfer_data(test_dir,data_obtained)
+    else:
+        data_obtained = execute_trcert(TARGET, NUM_RUNS, RUN_DELAY, MAX_HOPS)
+
+    if  data_obtained == 0:
+        print("No data is present in the file.")
+        return
+
+    with open(OUTPUT_JSON, "w") as json_file:
+        json.dump(data_obtained, json_file, indent=6)
+        print(f"The output data is saved to {OUTPUT_JSON}")
+
+    if GRAPH:
+        final_graph(data_obtained, GRAPH)
+        print(f"The required graph is saved to {GRAPH}")
+
+def transfer_data(test_dir,data_obtained):
+    #data_obtained = []
+    for file_name in os.listdir(test_dir):
+        if file_name.endswith(".txt"):
+            with open(os.path.join(test_dir, file_name), "r") as file:
+                timestamp = datetime.fromtimestamp(os.path.getmtime(file.name)).strftime("%Y-%m-%d %H:%M:%S")
+                resultant_data = file.read()
+                data_obtained.append({
+                    "timestamp": timestamp,
+                    "resultant_data": resultant_data
+                })
+    
+    return data_obtained
+
+def execute_trcert(TARGET, NUM_RUNS, RUN_DELAY, MAX_HOPS):
+    results = []
+
+    for _ in range(NUM_RUNS):
+        procedure = subprocess.Popen(
+            ["traceroute", TARGET],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        stdout, stderr = procedure.communicate()
+
+        if procedure.returncode != 0:
+            print(f"cannot run the required traceroute as the return code is not 0 {stderr}")
+            continue
+
+        output = stdout.strip().split('\n')
+
+        num_hops = []
+        for line in output:
+            match = re.match(r'\s*(\d+)\s+([\w.-]+) \(([\d.]+)\)\s+(.*)', line)
+            if match:
+                hop, host, ip, latency_info = match.groups()
+                num_hops.append({'hop': int(hop), 'hosts': [[host, f'({ip})']]})
+                latencies = re.findall(r'([\d.]+) ms', latency_info)
+                if latencies:
+                    latencies = [float(latency) for latency in latencies]
+                    num_hops[-1]['min'] = min(latencies)
+                    num_hops[-1]['max'] = max(latencies)
+                    num_hops[-1]['avg'] = sum(latencies) / len(latencies)
+                    num_hops[-1]['med'] = sorted(latencies)[len(latencies) // 2]
+
+        results.extend(num_hops)
+        if _ < NUM_RUNS - 1:
+            time.sleep(RUN_DELAY)
+
+    return results
+def final_graph(data_obtained, GRAPH):
+    with open('data_obtained.json', 'r') as json_file:
+        data_obtained = json.load(json_file)
+
+        computing_hop = defaultdict(list)
+
+    for input in data_obtained:
+        hop_count = input['hop']
+        avg_latency = input['avg']
+        #computing_hop.append(hop_count)
+        computing_hop[hop_count].append(avg_latency)
+    #sorted_array = sort(computing_hop.keys())
+    #print("sorting the array")
+    sorted_count = sorted(computing_hop.keys())
+    ordered_list = [computing_hop[hop] for hop in sorted_count]
+    plt.figure(figsize=(12, 6))
+    boxplot = plt.boxplot(ordered_list, vert=True, patch_artist=True)  
+    #if boxplot!=0
+        #boxplot = plt.boxplot(sorted_hop_latencies, vert=false, patch_artist=true)
+        #print("creating boxplot")
+    #else:
+    #    print("error")
+    
+    plt.ylabel('Latency (ms)')
+    plt.xlabel('Hop Number')
+    plt.title('Latency Distribution Per Hop')
+    plt.grid(True)
+
+    plt.xticks(range(1, len(sorted_count) + 1), sorted_count)
+
+    #colors = ['pink', 'lightblue', 'lightgreen', 'red', 'cyan', 'magenta', 'yellow', 'orange', 'brown','purple', 'grey','olive','pink', 'lightblue', 'lightgreen', 'red', 'cyan', 'magenta', 'yellow', 'orange', 'brown','purple', 'grey','olive']
+    #for bplot in boxplot:
+    #    for patch, color in zip(bplot['boxes'], colors):
+    #        patch.set_facecolor(color)
+
+    plt.show()
+    plt.savefig(GRAPH, format='png')
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    #print("entered in main")
+    parser.add_argument("-m" , "--MAX_HOPS" ,default = 30, type = int ,help = 'Max hops by default is set to 30')
+    parser.add_argument("-n" , "--NUM_RUNS" , type = int, default = 1, help = "Number of traceroute run")
+    parser.add_argument("-t" , "--TARGET"   , help = "Target host or IP" , required = not "--test" in sys.argv)
+    parser.add_argument("-g" , "--GRAPH"   , help = "name of output file that contain the graph")
+    parser.add_argument("-d" , "--RUN_DELAY" , type = int, help = "delay time between two consecutive run")
+    parser.add_argument("-o" , "--OUTPUT_JSON" , required = True, help = "name of the output file that has been generated in json format")
+    parser.add_argument("--test", dest="test_dir", help="Directory containing num_runs text files with traceroute output")
+    args = parser.parse_args()
+    start_first(args.TARGET, args.NUM_RUNS, args.RUN_DELAY, args.MAX_HOPS, args.OUTPUT_JSON,args.GRAPH, args.test_dir)
